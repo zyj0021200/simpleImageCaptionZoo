@@ -1,0 +1,6 @@
+image_root=/Datasets/MSCOCO/2014/
+train_caption_path=/Datasets/MSCOCO/2014/modified_annotations/captions_train.json
+val_caption_path=/Datasets/MSCOCO/2014/modified_annotations/captions_val.json
+test_caption_path=/Datasets/MSCOCO/2014/modified_annotations/captions_test.json
+data_dir=/Data/MSCOCO/2014/
+caption_vocab_path=/Data/MSCOCO/2014/caption_vocab.pkl

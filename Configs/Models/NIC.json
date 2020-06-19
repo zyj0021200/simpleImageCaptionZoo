@@ -1,0 +1,10 @@
+{
+  "model_type": "NIC",
+  "embed_dim": 512,
+  "hidden_dim": 512,
+  "optimizer": "Adam",
+  "cnn_lr": 1e-4,
+  "rnn_lr": 4e-4,
+  "scst_cnn_lr": 1e-5,
+  "scst_rnn_lr": 2e-5
+}

@@ -1,0 +1,6 @@
+image_root=/Datasets/Flickr/30K/images/
+train_caption_path=/Datasets/Flickr/30K/modified_annotations/captions_train.json
+val_caption_path=/Datasets/Flickr/30K/modified_annotations/captions_val.json
+test_caption_path=/Datasets/Flickr/30K/modified_annotations/captions_test.json
+data_dir=/Data/Flickr/30K/
+caption_vocab_path=/Data/Flickr/30K/caption_vocab.pkl

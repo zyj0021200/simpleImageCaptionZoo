@@ -1,2 +1,2 @@
-# simple-NIC
-Simple but Comprehensive PyTorch Implementation of NIC model for Image Captioning
+# simpleImageCaptionZoo
+Simple but Comprehensive PyTorch Implementation of Image Caption Models.

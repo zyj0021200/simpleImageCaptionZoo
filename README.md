@@ -1,5 +1,5 @@
 # simple Image Caption Zoo
-This is a PyTorch implementation (more like a **tutorial**) of Image Caption Models. However, this project does not win with the variety of STOA models covered. Its main purpose is to introduce the common operations and tricks involved in the reproduction process of Image Caption models. I tried to make the code as simple as possible, while the comments are as detailed as possible. Considering I am not a native English speaker, some of my comment statements may not be accurate enough. The project has covered the following content:
+This is a PyTorch implementation of Image Caption Models. However, this project does not win with the variety of STOA models covered. Its main purpose is to introduce the common operations and tricks involved in the reproduction process of Image Caption models. I tried to make the code as simple as possible, while the comments are as detailed as possible. Considering I am not a native English speaker, some of my comment statements may not be accurate enough. The project has covered the following content:
 
 - Support training and testing for **four datasets** (Flickr8K/30K,COCO14/17)
 - **Beam_search** strategy when evaluating
@@ -30,7 +30,7 @@ Many thanks to the authors and their codes for the following references:
 
 ## Results obtained
 
-![results](D:\5 Programme\PyCharmProjects\results.png)
+![results](https://github.com/zyj0021200/simpleImageCaptionZoo/blob/master/images/results.png)
 
 Results reported on COCO14 Karpathy test split.
 
@@ -51,3 +51,6 @@ Results reported on COCO14 Karpathy test split.
 
 - I will update the pretrained checkpoints soon, but I really suggest that you train the model from scratch. Remember to pre-train the model with **XELoss** before **SCST** training. For more operational instructions, please refer to the comments in **Main.py**.
 
+# Visualization and evaluation example
+
+<div align=center><img src="https://github.com/zyj0021200/simpleImageCaptionZoo/blob/master/images/atten.png" width="500" /></div>

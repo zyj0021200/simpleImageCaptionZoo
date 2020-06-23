@@ -66,6 +66,7 @@ class DecoderRNN(nn.Module):
         self.vocab_size = vocab_size
         self.enc_dim = enc_dim
         self.device = device
+        self.ss_prob = 0.0
         self.dropout = nn.Dropout(p=dropout)
 
         self.atten = SoftAttention(enc_dim=enc_dim,hidden_dim=hidden_dim,atten_dim=atten_dim)
@@ -88,7 +89,7 @@ class DecoderRNN(nn.Module):
     def forward(self,enc_features,global_features,captions,lengths):
         bsize = enc_features.size(0)
         num_pixels = enc_features.size(1)   #(bsize,49,2048)
-        embeddings = self.embed(captions)
+        #embeddings = self.embed(captions)
         h1,c1 = self.init_hidden_state(bsize)
         h2,c2 = self.init_hidden_state(bsize)
         predictions = torch.zeros(bsize,max(lengths),self.vocab_size).to(self.device)
@@ -96,8 +97,22 @@ class DecoderRNN(nn.Module):
 
         for time_step in range(max(lengths)):
             bsize_t = sum([l > time_step for l in lengths])
+            if time_step >= 2 and self.ss_prob > 0.0:
+                sample_prob = torch.zeros(bsize_t).uniform_(0,1).to(self.device)
+                sample_mask = sample_prob < self.ss_prob
+                if sample_mask.sum() == 0:
+                    it = captions[:bsize_t,time_step]
+                else:
+                    sample_ind = sample_mask.nonzero().view(-1)
+                    it = captions[:bsize_t,time_step].clone()
+                    prob_prev = torch.softmax(preds,dim=1)
+                    it.index_copy_(0, sample_ind, torch.multinomial(prob_prev, 1).view(-1).index_select(0, sample_ind))
+            else:
+                it = captions[:bsize_t,time_step]
+
+            embeddings = self.embed(it) #(bsize_t,embed_dim)
             h1,c1 = self.TD_atten(
-                torch.cat([h2[:bsize_t],global_features[:bsize_t],embeddings[:bsize_t,time_step,:]],dim=1),
+                torch.cat([h2[:bsize_t],global_features[:bsize_t],embeddings],dim=1),
                 (h1[:bsize_t],c1[:bsize_t])
             )
             atten_weighted_enc,alpha = self.atten(enc_features[:bsize_t],h1[:bsize_t])
@@ -111,34 +126,6 @@ class DecoderRNN(nn.Module):
 
         pack_predictions = pack_padded_sequence(predictions, lengths, batch_first=True)
         return pack_predictions, alphas
-
-    def sample(self,enc_features,global_features,max_len=20):
-        bsize = enc_features.size(0)
-        num_pixels = enc_features.size(1)   #(bsize,49,2048)
-        h1,c1 = self.init_hidden_state(bsize)
-        h2,c2 = self.init_hidden_state(bsize)
-        captions = torch.LongTensor(bsize,1).fill_(1).to(self.device)
-        sampled_ids = []
-        alphas = []
-        for time_step in range(max_len):
-            embeddings = self.embed(captions).squeeze(1)    #(bsize,embed_dim)
-            h1,c1 = self.TD_atten(
-                torch.cat([h2,global_features,embeddings],dim=1),
-                (h1,c1)
-            )
-            atten_weighted_enc,alpha = self.atten(enc_features,h1)
-            h2,c2 = self.language_model(
-                torch.cat([atten_weighted_enc,h1],dim=1),
-                (h2,c2)
-            )
-            preds = self.predict(self.dropout(h2))
-            pred_id = preds.max(1)[1]  # (bsize,)
-            captions = pred_id.unsqueeze(1)  # (bsize,1)
-            sampled_ids.append(captions)
-            alphas.append(alpha.unsqueeze(1))  # (bsize,1,196)
-        sampled_ids = torch.cat(sampled_ids, dim=1)  # (bsize,max_seq)
-        alphas = torch.cat(alphas, dim=1)  # (bsize,max_seq,196)
-        return sampled_ids, alphas
 
     def sample(self,enc_features,global_features,max_len=20):
         bsize = enc_features.size(0)

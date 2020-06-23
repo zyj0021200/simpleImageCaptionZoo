@@ -38,6 +38,7 @@ class DecoderRNN(nn.Module):
         self.hidden_dim = hidden_dim
         self.vocab_size = vocab_size
         self.device = device
+        self.ss_prob = 0.0
         self.embed = nn.Embedding(num_embeddings=vocab_size,embedding_dim=embed_dim)
         self.lstm = nn.LSTMCell(input_size=embed_dim,hidden_size=hidden_dim,bias=True)
         self.predict = weight_norm(nn.Linear(in_features=hidden_dim,out_features=vocab_size,bias=True))
@@ -58,12 +59,26 @@ class DecoderRNN(nn.Module):
         '''
         bsize = features.size(0)
         h,c = self.init_hidden_state(bsize=bsize,hidden_dim=self.hidden_dim,features=features)
-        embeddings = self.embed(captions)   #(bsize,max_len,embed_dim)
+        #embeddings = self.embed(captions)   #(bsize,max_len,embed_dim)
         predictions = torch.zeros(captions.size(0),captions.size(1)-1,self.vocab_size).to(self.device)
 
         for time_step in range(captions.size(1)-1):
             bsize_t = sum([caption_len > time_step for caption_len in lengths])
-            h,c = self.lstm(embeddings[:bsize_t,time_step,:],(h[:bsize_t],c[:bsize_t]))
+            if time_step >= 2 and self.ss_prob > 0.0:
+                sample_prob = torch.zeros(bsize_t).uniform_(0,1).to(self.device)
+                sample_mask = sample_prob < self.ss_prob
+                if sample_mask.sum() == 0:
+                    it = captions[:bsize_t,time_step]
+                else:
+                    sample_ind = sample_mask.nonzero().view(-1)
+                    it = captions[:bsize_t,time_step].clone()
+                    prob_prev = torch.softmax(preds,dim=1)
+                    it.index_copy_(0, sample_ind, torch.multinomial(prob_prev, 1).view(-1).index_select(0, sample_ind))
+            else:
+                it = captions[:bsize_t,time_step]
+
+            embeddings = self.embed(it) #(bsize_t,embed_dim)
+            h,c = self.lstm(embeddings,(h[:bsize_t],c[:bsize_t]))
             preds = self.predict(self.dropout(h))   #(bsize,vocab_size)
             predictions[:bsize_t,time_step,:] = preds
 

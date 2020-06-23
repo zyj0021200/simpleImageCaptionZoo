@@ -1,0 +1,6 @@
+{
+  "model_type": "AoASpatial",
+  "enc_img_size": 7,
+  "embed_dim": 512,
+  "hidden_dim": 512
+}

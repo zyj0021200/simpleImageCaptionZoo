@@ -226,14 +226,14 @@ def PTB_pre_tokenization_COCO17(json_path):
 def main(args):
     #generate_modified_json_flickr(ks_json_path=args.Flickr30K_karpathy_json_path,dataset_name='Flickr30K',tokenizer=args.tokenizer)
     #generate_modified_json_flickr(ks_json_path=args.Flickr8K_karpathy_json_path,dataset_name='Flickr8K',tokenizer=args.tokenizer)
-    #generate_modified_json_coco14(ks_json_path=args.COCO14_karpathy_json_path,dataset_name='COCO14',tokenizer=args.tokenizer)
+    generate_modified_json_coco14(ks_json_path=args.COCO14_karpathy_json_path,dataset_name='COCO14',tokenizer=args.tokenizer)
     #generate_modified_json_coco17(original_json_root=args.COCO17_original_json_root,tokenizer=args.tokenizer)
     show_modified_jsons()
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     #------------global settings-------------------#
-    parser.add_argument('--dataset',type=str,default='Flickr30K')
+    parser.add_argument('--dataset',type=str,default='COCO14')
     parser.add_argument('--Flickr8K_karpathy_json_path',type=str,default='./Datasets/Flickr/8K/dataset_flickr8k.json')
     parser.add_argument('--Flickr30K_karpathy_json_path',type=str,default='./Datasets/Flickr/30K/dataset_flickr30k.json')
     parser.add_argument('--COCO14_karpathy_json_path',type=str,default='./Datasets/MSCOCO/2014/dataset_coco.json')

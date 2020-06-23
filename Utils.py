@@ -11,6 +11,7 @@ import torchvision.transforms as transforms
 from DatasetClass import CaptionData
 from Models.NIC_Model import NIC_Captioner
 from Models.BUTDSpatial_Model import BUTDSpatial_Captioner
+from Models.AoASpatial_Model import AoASpatial_Captioner
 from Build_Vocab import build_vocab
 import torch.utils.data as tdata
 from Datasets import CaptionTrainDataset,CaptionEvalDataset,CaptionTrainSCSTDataset,COCOCaptionTrain_collate_fn,COCOCaptionTrainSCST_collate_fn
@@ -74,7 +75,7 @@ def get_scst_train_dataloader(args,opt):
     train_img_transform = get_transform(resized_img_size=args.img_size, enhancement=['RandomHorizontalFlip'])
     scst_train_dataset = CaptionTrainSCSTDataset(img_root=opt['image_root'], cap_ann_path=opt['train_caption_path'],
                                                  img_transform=train_img_transform, dataset_name=args.dataset)
-    scst_train_dataloader = tdata.DataLoader(dataset=scst_train_dataset, batch_size=args.SCST_train_batch_size,
+    scst_train_dataloader = tdata.DataLoader(dataset=scst_train_dataset, batch_size=args.scst_train_batch_size,
                                              shuffle=True, num_workers=4, collate_fn=COCOCaptionTrainSCST_collate_fn)
     print('Finish initialing scst_train_dataloader.')
     return scst_train_dataloader
@@ -153,6 +154,14 @@ def model_construction(model_settings_json,caption_vocab,device):
             vocab_size=len(caption_vocab),
             device=device
         )
+    elif settings['model_type'] == 'AoASpatial':
+        model = AoASpatial_Captioner(
+            encoded_img_size=settings['enc_img_size'],
+            embed_dim=settings['embed_dim'],
+            hidden_dim=settings['hidden_dim'],
+            vocab_size=len(caption_vocab),
+            device=device
+        )
     return model,settings
 
 def get_transform(resized_img_size=224,enhancement=[]):
@@ -170,6 +179,23 @@ def init_SGD_optimizer(params, lr, momentum=0.9, weight_decay=1e-5):
     return torch.optim.SGD(params=params, lr=lr, momentum=momentum, weight_decay=weight_decay)
 def init_Adam_optimizer(params, lr):
     return torch.optim.Adam(params=params, lr=lr)
+
+def init_optimizer(optimizer_type,params,learning_rate):
+    optimizer = None
+    if len(params)>0:
+        if optimizer_type == 'Adam':
+            optimizer = init_Adam_optimizer(params=params,lr=learning_rate)
+        elif optimizer_type == 'SGD':
+            optimizer = init_SGD_optimizer(params=params,lr=learning_rate)
+    return optimizer
+
+def set_lr(optimizer, lr):
+    for group in optimizer.param_groups:
+        group['lr'] = lr
+
+def get_lr(optimizer):
+    for group in optimizer.param_groups:
+        return group['lr']
 
 def clip_gradient(optimizer, grad_clip):
     """

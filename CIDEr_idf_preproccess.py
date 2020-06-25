@@ -94,7 +94,7 @@ def main(args):
             #print(value)
             cnt += 1
             #if cnt > 10: break
-            if 'someones' in key:
+            if 'vehicle' in key:
                 print(key)
                 print(value)
 

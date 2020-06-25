@@ -1,7 +1,9 @@
 import os
 import argparse
 import torch
-from Engine import NIC_Eng,BUTDSpatial_Eng,AoASpatial_Eng
+from ModelEngines.NIC_Engine import NIC_Eng
+from ModelEngines.BUTD_Engine import BUTDSpatial_Eng,BUTDDetection_Eng
+from ModelEngines.AoA_Engine import AoASpatial_Eng,AoADetection_Eng
 from Utils import parse_data_config,get_caption_vocab,get_train_dataloader,get_eval_dataloader,get_scst_train_dataloader
 
 import resource
@@ -19,21 +21,30 @@ def main(args):
     # Currently only supports single GPU
     device = args.gpu_id if torch.cuda.is_available() else 'cpu'
     #------------------------Caption Vocab Preprocess----------------------------#
-    # Mkdir for storing supplementary data for different datasets, e.g. the caption_vocab will be dumped here.
+    # Mkdir for storing supplementary data for different datasets, e.g. the caption_vocab, bottom_up_features will be dumped here.
     os.makedirs(opt['data_dir'],exist_ok=True)
     # Build/Load caption vocab for different datasets
     caption_vocab = get_caption_vocab(args,opt)
     # ------------------------ModelEngine_init----------------------------------#
     # Build up models based on the MODELNAME.json stored in Configs/Models/
+    # 'Detecton' means the models need the pretrained bottom-up features,
+    # currently only support COCO14 bottom-up-features,
+    # thus only valid for training and testing of COCO14 Dataset
     if args.model_type == 'NIC':
         model = NIC_Eng(model_settings_json=os.path.join(args.model_config_root, args.model_type + '.json'),
                         dataset_name=args.dataset, caption_vocab=caption_vocab, device=device)
     elif args.model_type == 'BUTDSpatial':
         model = BUTDSpatial_Eng(model_settings_json=os.path.join(args.model_config_root, args.model_type + '.json'),
-                        dataset_name=args.dataset, caption_vocab=caption_vocab, device=device)
+                                dataset_name=args.dataset, caption_vocab=caption_vocab, device=device)
+    elif args.model_type == 'BUTDDetection':
+        model = BUTDDetection_Eng(model_settings_json=os.path.join(args.model_config_root, args.model_type + '.json'),
+                                  dataset_name=args.dataset,caption_vocab=caption_vocab,data_dir=opt['data_dir'],device=device)
     elif args.model_type == 'AoASpatial':
         model = AoASpatial_Eng(model_settings_json=os.path.join(args.model_config_root, args.model_type + '.json'),
-                        dataset_name=args.dataset, caption_vocab=caption_vocab, device=device)
+                               dataset_name=args.dataset, caption_vocab=caption_vocab, device=device)
+    elif args.model_type == 'AoADetection':
+        model = AoADetection_Eng(model_settings_json=os.path.join(args.model_config_root, args.model_type + '.json'),
+                                 dataset_name=args.dataset, caption_vocab=caption_vocab, data_dir=opt['data_dir'], device=device)
     print('model construction complete.')
     #---------------------------Operations---------------------------------------#
     if args.operation == 'train':
@@ -48,7 +59,7 @@ def main(args):
             eval_caption_path=opt['val_caption_path'],      # evaluation needs the raw captions stored in the json_file
             optimizer_type=args.optimizer,
             lr_opts={'learning_rate':args.learning_rate,                    # learning rate & lr decay settings
-                     'cnn_FT_learning_rate':args.cnn_FT_learning_rate,      # only valid for models using cnn extractors like ResNet-101
+                     'cnn_FT_learning_rate':args.cnn_FT_learning_rate,      # only valid for models using cnn extractors like ResNet-101(NIC,BUTDSpatial,AoASpatial)
                      'lr_dec_start_epoch':args.learning_rate_decay_start,
                      'lr_dec_every':args.learning_rate_decay_every,
                      'lr_dec_rate':args.learning_rate_decay_rate},
@@ -111,18 +122,18 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     #------------------------------------Global Settings------------------------------------#
     parser.add_argument('--dataset',type=str,default='COCO14',help='choose the dataset for training and evaluating')
-    parser.add_argument('--model_type',type=str,default='BUTDSpatial',help='choose the model_type, currently only supports two models')
+    parser.add_argument('--model_type',type=str,default='BUTDDetection',help='choose the model_type, currently only supports two models')
     parser.add_argument('--dataset_config_root',type=str,default='./Configs/Datasets/',help='root to store dataset_configs')
     parser.add_argument('--model_config_root',type=str,default='./Configs/Models/',help='root to store model_configs')
-    parser.add_argument('--gpu_id',type=str,default='cuda:7')
+    parser.add_argument('--gpu_id',type=str,default='cuda:6')
     parser.add_argument('--tqdm_visible',type=bool,default=True,help='choose to enable the tqdm_bar to show the training/evaluation process')
-    parser.add_argument('--operation',type=str,default='sample')
+    parser.add_argument('--operation',type=str,default='train')
 
     #-----------------------------------Train Settings---------------------------------------#
     # Note that models trained w/w_o SCST algorithm are stored separately
     #------------------------------global training settings----------------------------------#
     parser.add_argument('--cnn_FT_start',type=bool,default=False,help='enable CNN fine-tune immediately, this option is mainly used for restarting after training suspension')
-    parser.add_argument('--overwrite_guarantee',type=bool,default=False,help='when this option is set True, the subsequent training process will only save the model checkpoints better than the previously stored records')
+    parser.add_argument('--overwrite_guarantee',type=bool,default=True,help='when this option is set True, the subsequent training process will only save the model checkpoints better than the previously stored records')
     parser.add_argument('--img_size',type=int,default=224)
     parser.add_argument('--optimizer',type=str,default='Adam')
     parser.add_argument('--use_preset',type=bool,default=True,help='when this option is set True, the model will be trained under the preset lr and optimizer in "MODELNAME.json"')
@@ -130,8 +141,8 @@ if __name__ == '__main__':
     parser.add_argument('--load_pretrained_model',type=bool,default=False,help='decide whether to load the pretrained checkpoints when starting a new training process')
     parser.add_argument('--num_epochs',type=int,default=50,help='maximum training epochs for training under XE Loss')
     parser.add_argument('--train_batch_size',type=int,default=128)
-    parser.add_argument('--learning_rate',type=float,default=2e-4)
-    parser.add_argument('--cnn_FT_learning_rate',type=float,default=1e-4,help='only valid for models using CNN to extract image features')
+    parser.add_argument('--learning_rate',type=float,default=5e-4)
+    parser.add_argument('--cnn_FT_learning_rate',type=float,default=5e-5,help='only valid for models using CNN to extract image features')
     parser.add_argument('--scheduled_sampling_start',type=int,default=0,help='when this option is set -1, scheduled sampling is disabled')
     parser.add_argument('--scheduled_sampling_increase_every',type=int,default=5)
     parser.add_argument('--scheduled_sampling_increase_prob',type=float,default=0.05)

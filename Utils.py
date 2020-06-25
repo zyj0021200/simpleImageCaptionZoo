@@ -10,10 +10,13 @@ import skimage.transform
 import torchvision.transforms as transforms
 from DatasetClass import CaptionData
 from Models.NIC_Model import NIC_Captioner
-from Models.BUTDSpatial_Model import BUTDSpatial_Captioner
-from Models.AoASpatial_Model import AoASpatial_Captioner
+from Models.BUTD_Model import BUTDSpatial_Captioner,BUTDDetection_Captioner
+from Models.AoA_Model import AoASpatial_Captioner,AoADetection_Captioner
 from Build_Vocab import build_vocab
 import torch.utils.data as tdata
+import torch.nn as nn
+import numpy as np
+from cider.pyciderevalcap.ciderD.ciderD import CiderD
 from Datasets import CaptionTrainDataset,CaptionEvalDataset,CaptionTrainSCSTDataset,COCOCaptionTrain_collate_fn,COCOCaptionTrainSCST_collate_fn
 
 #----------------------data utils--------------------------#
@@ -154,6 +157,14 @@ def model_construction(model_settings_json,caption_vocab,device):
             vocab_size=len(caption_vocab),
             device=device
         )
+    elif settings['model_type'] == 'BUTDDetection':
+        model = BUTDDetection_Captioner(
+            atten_dim=settings['atten_dim'],
+            embed_dim=settings['embed_dim'],
+            hidden_dim=settings['hidden_dim'],
+            vocab_size=len(caption_vocab),
+            device=device
+        )
     elif settings['model_type'] == 'AoASpatial':
         model = AoASpatial_Captioner(
             encoded_img_size=settings['enc_img_size'],
@@ -162,8 +173,16 @@ def model_construction(model_settings_json,caption_vocab,device):
             vocab_size=len(caption_vocab),
             device=device
         )
+    elif settings['model_type'] == 'AoADetection':
+        model = AoADetection_Captioner(
+            embed_dim=settings['embed_dim'],
+            hidden_dim=settings['hidden_dim'],
+            vocab_size=len(caption_vocab),
+            device=device
+        )
     return model,settings
 
+#-----------------------training utils--------------------------#
 def get_transform(resized_img_size=224,enhancement=[]):
     transform_instructions = [transforms.Resize((resized_img_size, resized_img_size), interpolation=Image.LANCZOS)]
     if 'RandomHorizontalFlip' in enhancement:
@@ -208,11 +227,92 @@ def clip_gradient(optimizer, grad_clip):
             if param.grad is not None:
                 param.grad.data.clamp_(-grad_clip, grad_clip)
 
+# SCST code mainly adapted from
+# https://github.com/ruotianluo/self-critical.pytorch and https://github.com/fawazsammani/show-edit-tell/
+
+class RewardCriterion(nn.Module):
+    def __init__(self):
+        super(RewardCriterion, self).__init__()
+
+    def forward(self, sample_logprobs, seq, reward):
+        '''
+        Compute the reward for this batch
+        :param sample_logprobs: (bsize,max_len)
+        :param seq: (bsize,max_len)
+        :param reward: (bsize,max_len)
+        :return: output: torch.FloatTensor
+        '''
+
+        sample_logprobs = sample_logprobs.view(-1)  # (batch_size * max_len)
+        reward = reward.view(-1)
+        # set mask elements for all <end> tokens to 0
+        mask = (seq > 0).float()  # (batch_size, max_len)
+        # account for the <end> token in the mask. We do this by shifting the mask one timestep ahead
+        mask = torch.cat([mask.new(mask.size(0), 1).fill_(1), mask[:, :-1]], 1)
+
+        if not mask.is_contiguous():
+            mask = mask.contiguous()
+
+        mask = mask.view(-1)
+        output = - sample_logprobs * reward * mask
+        output = torch.sum(output) / torch.sum(mask)
+        return output
+
+def get_self_critical_reward(gen_result, greedy_res, ground_truth, img_ids, caption_vocab, dataset_name, cider_weight=1):
+    '''
+    :param gen_result: (batch_size, max_len)
+    :param greedy_res: (batch_size, max_len)
+    :param ground_truth:
+    :param img_ids:
+    :param caption_vocab:
+    :param dataset_name:
+    :param cider_weight:
+    :return:
+    '''
+
+    batch_size = gen_result.size(0)
+    res = []
+    gen_result = gen_result.data.cpu().numpy()  # (batch_size, max_len)
+    greedy_res = greedy_res.data.cpu().numpy()  # (batch_size, max_len)
+
+    for image_idx in range(batch_size):
+        sampled_ids = gen_result[image_idx]
+        for endidx in range(len(sampled_ids)-1,-1,-1):
+            if sampled_ids[endidx] != 0:
+                break
+        sampled_ids = sampled_ids[:endidx+1]
+        sampled_caption = []
+        for word_id in sampled_ids:
+            word = caption_vocab.ix2word[word_id]
+            sampled_caption.append(word)
+        sentence = ' '.join(sampled_caption)
+        res.append({'image_id': img_ids[image_idx], 'caption': [sentence]})
+
+    for image_idx in range(batch_size):
+        sampled_ids = greedy_res[image_idx]
+        sampled_caption = []
+        for word_id in sampled_ids:
+            word = caption_vocab.ix2word[word_id]
+            if word == '<end>':break
+            sampled_caption.append(word)
+        sentence = ' '.join(sampled_caption)
+        res.append({'image_id': img_ids[image_idx], 'caption': [sentence]})
+
+    CiderD_scorer = CiderD(df='%s-train' % dataset_name)
+    _, cider_scores = CiderD_scorer.compute_score(ground_truth, res)
+
+    scores = cider_weight * cider_scores
+    scores = scores[:batch_size] - scores[batch_size:]
+    rewards = np.repeat(scores[:, np.newaxis], gen_result.shape[1], 1)  # gen_result.shape[1] = max_len
+    rewards = torch.from_numpy(rewards).float()
+
+    return rewards
+
 #----------------------sample utils------------------#
-def visualize_att(image, alphas, caption, img_size=448, smooth=True, STAflag=False):
+def visualize_att(image, alphas, caption, img_size=448, smooth=True):
     """
     Visualizes caption with weights at every word.
-    :param image: (3,H,W)
+    :param image: (W,H)
     :param alphas: weights (L-1,h*w)
     :param caption: [<sta>,'a','man',...,'.',<end>]
     :param smooth: smooth weights?
@@ -220,6 +320,7 @@ def visualize_att(image, alphas, caption, img_size=448, smooth=True, STAflag=Fal
     image = image.resize([img_size, img_size], Image.LANCZOS)
 
     for t in range(len(caption)):
+        plt.subplot(np.ceil(len(caption) / 5.), 5, t + 1)
         plt.text(0, 1, '%s' % (caption[t]), color='black', backgroundcolor='white', fontsize=12)
         plt.imshow(image)
         current_alpha = alphas[t, :]
@@ -227,10 +328,47 @@ def visualize_att(image, alphas, caption, img_size=448, smooth=True, STAflag=Fal
             alpha = skimage.transform.pyramid_expand(current_alpha, upscale=img_size/current_alpha.shape[0], sigma=8)
         else:
             alpha = skimage.transform.resize(current_alpha, [img_size, img_size])
-        if t == 0 and STAflag:
+        if t == 0:
             plt.imshow(alpha, alpha=0)
         else:
             plt.imshow(alpha, alpha=0.8)
         plt.set_cmap(cm.Greys_r)
         plt.axis('off')
-        plt.show()
+    plt.show()
+
+def visualize_att_bboxes(image, alphas, bboxes, caption, img_size=448):
+    """
+    Visualizes caption with weights at every word.
+    :param image: (W,H)
+    :param alphas: weights (L-1,36)
+    :param bboxes: (36,4) numpy.ndarry
+    :param caption: [<sta>,'a','man',...,'.',<end>]
+    :param smooth: smooth weights?
+    """
+    W,H = image.size
+    image = image.resize([img_size, img_size], Image.LANCZOS)
+
+    for t in range(len(caption)):
+        plt.subplot(np.ceil(len(caption) / 5.), 5, t + 1)
+        plt.text(0, 1, '%s' % (caption[t]), color='black', backgroundcolor='white', fontsize=12)
+        plt.imshow(image)
+        current_alpha = alphas[t, :]
+        alpha_map = np.zeros(shape=(H,W))
+        for i,bbox in enumerate(bboxes):
+            alpha_map_this_bbox = np.zeros(shape=(H,W))
+            xmin,ymin,xmax,ymax = bbox
+            xmin_ = int(np.floor(xmin))
+            ymin_ = int(np.floor(ymin))
+            xmax_ = int(np.ceil(xmax))
+            ymax_ = int(np.ceil(ymax))
+            alpha_map_this_bbox[ymin_:ymax_,xmin_:xmax_] = current_alpha[i]
+            alpha_map += alpha_map_this_bbox
+
+        alpha = skimage.transform.resize(alpha_map, [img_size, img_size])
+        if t == 0:
+            plt.imshow(alpha, alpha=0)
+        else:
+            plt.imshow(alpha, alpha=0.8)
+        plt.set_cmap(cm.Greys_r)
+        plt.axis('off')
+    plt.show()

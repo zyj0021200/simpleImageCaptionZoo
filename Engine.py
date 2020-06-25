@@ -1,7 +1,7 @@
 import os
 import json
 from COCO_Eval_Utils import coco_eval,coco_eval_specific
-from Utils import model_construction,init_optimizer,set_lr,clip_gradient,get_transform,get_sample_image_info,visualize_att
+from Utils import model_construction,init_optimizer,set_lr,clip_gradient,get_transform,get_sample_image_info,visualize_att,RewardCriterion,get_self_critical_reward
 import torch.nn as nn
 import torch
 from torch.nn.utils.rnn import pack_padded_sequence
@@ -10,91 +10,11 @@ import numpy as np
 from cider.pyciderevalcap.tokenizer.ptbtokenizer import PTBTokenizer
 from cider.pyciderevalcap.ciderD.ciderD import CiderD
 
-# SCST code mainly adapted from
-# https://github.com/ruotianluo/self-critical.pytorch and https://github.com/fawazsammani/show-edit-tell/
-
-class RewardCriterion(nn.Module):
-    def __init__(self):
-        super(RewardCriterion, self).__init__()
-
-    def forward(self, sample_logprobs, seq, reward):
-        '''
-        Compute the reward for this batch
-        :param sample_logprobs: (bsize,max_len)
-        :param seq: (bsize,max_len)
-        :param reward: (bsize,max_len)
-        :return: output: torch.FloatTensor
-        '''
-
-        sample_logprobs = sample_logprobs.view(-1)  # (batch_size * max_len)
-        reward = reward.view(-1)
-        # set mask elements for all <end> tokens to 0
-        mask = (seq > 0).float()  # (batch_size, max_len)
-        # account for the <end> token in the mask. We do this by shifting the mask one timestep ahead
-        mask = torch.cat([mask.new(mask.size(0), 1).fill_(1), mask[:, :-1]], 1)
-
-        if not mask.is_contiguous():
-            mask = mask.contiguous()
-
-        mask = mask.view(-1)
-        output = - sample_logprobs * reward * mask
-        output = torch.sum(output) / torch.sum(mask)
-        return output
-
-def get_self_critical_reward(gen_result, greedy_res, ground_truth, img_ids, caption_vocab, dataset_name, cider_weight=1):
-    '''
-    :param gen_result: (batch_size, max_len)
-    :param greedy_res: (batch_size, max_len)
-    :param ground_truth:
-    :param img_ids:
-    :param caption_vocab:
-    :param dataset_name:
-    :param cider_weight:
-    :return:
-    '''
-
-    batch_size = gen_result.size(0)
-    res = []
-    gen_result = gen_result.data.cpu().numpy()  # (batch_size, max_len)
-    greedy_res = greedy_res.data.cpu().numpy()  # (batch_size, max_len)
-
-    for image_idx in range(batch_size):
-        sampled_ids = gen_result[image_idx]
-        for endidx in range(len(sampled_ids)-1,-1,-1):
-            if sampled_ids[endidx] != 0:
-                break
-        sampled_ids = sampled_ids[:endidx+1]
-        sampled_caption = []
-        for word_id in sampled_ids:
-            word = caption_vocab.ix2word[word_id]
-            sampled_caption.append(word)
-        sentence = ' '.join(sampled_caption)
-        res.append({'image_id': img_ids[image_idx], 'caption': [sentence]})
-
-    for image_idx in range(batch_size):
-        sampled_ids = greedy_res[image_idx]
-        sampled_caption = []
-        for word_id in sampled_ids:
-            word = caption_vocab.ix2word[word_id]
-            if word == '<end>':break
-            sampled_caption.append(word)
-        sentence = ' '.join(sampled_caption)
-        res.append({'image_id': img_ids[image_idx], 'caption': [sentence]})
-
-    CiderD_scorer = CiderD(df='%s-train' % dataset_name)
-    _, cider_scores = CiderD_scorer.compute_score(ground_truth, res)
-
-    scores = cider_weight * cider_scores
-    scores = scores[:batch_size] - scores[batch_size:]
-    rewards = np.repeat(scores[:, np.newaxis], gen_result.shape[1], 1)  # gen_result.shape[1] = max_len
-    rewards = torch.from_numpy(rewards).float()
-
-    return rewards
-
 class Engine(object):
-    def __init__(self,model_settings_json,dataset_name,caption_vocab,device):
+    def __init__(self,model_settings_json,dataset_name,caption_vocab,data_dir=None,device='cpu'):
         self.model,self.settings = model_construction(model_settings_json=model_settings_json,caption_vocab=caption_vocab,device=device)
         self.device = device
+        self.data_dir = data_dir
         self.dataset_name = dataset_name
         self.caption_vocab = caption_vocab
         self.tag = 'Model_' + self.settings['model_type'] + '_Dataset_' + dataset_name
@@ -193,6 +113,7 @@ class Engine(object):
                   % (current_lr,cnn_FT_lr,ss_prob))
             print('------------------------------------------------------------------------------------------')
             self.training_epoch(dataloader=train_dataloader, optimizers=[cnn_extractor_optimizer,captioner_optimizer], criterion=criterion, tqdm_visible=tqdm_visible)
+
             print('--------------Start evaluating for Epoch %d-----------------' % epoch)
             results = self.eval_captions_json_generation(
                 dataloader=eval_dataloader,
@@ -208,16 +129,16 @@ class Engine(object):
                     json.dump(score_record,open('./CheckPoints/%s/Captioner_cp_score.json' % (self.tag),'w'))
                 best_cider = cider
                 best_epoch = epoch
-            if len(cider_scores) >= 4:
-                last_4 = cider_scores[-4:]
-                last_4_max = max(last_4)
-                last_4_min = min(last_4)
-                if last_4_max != best_cider or abs(last_4_max - last_4_min) <= 0.01:
+            if len(cider_scores) >= 5:
+                last_5 = cider_scores[-4:]
+                last_5_max = max(last_5)
+                last_5_min = min(last_5)
+                if last_5_max != best_cider or abs(last_5_max - last_5_min) <= 0.01:
                     if not hasattr(self.model,'cnn_fine_tune') or cnn_FT_start:
-                        print('No improvement with CIDEr in the last 4 epochs...Early stopping triggered.')
+                        print('No improvement with CIDEr in the last 5 epochs...Early stopping triggered.')
                         break
                     else:
-                        print('No improvement with CIDEr in the last 4 epochs...CNN fine-tune triggered.')
+                        print('No improvement with CIDEr in the last 5 epochs...CNN fine-tune triggered.')
                         best_cider_woFT = best_cider
                         best_epoch_woFT = best_epoch
                         cnn_FT_start = True
@@ -395,29 +316,3 @@ class Engine(object):
 
     def show_additional_rlt(self,additional,image,caption):
         pass
-
-#-----------------specific model engine------------------#
-class NIC_Eng(Engine):
-    def get_model_params(self):
-        cnn_extractor_params = list(filter(lambda p: p.requires_grad, self.model.encoder.feature_extractor.parameters()))
-        captioner_params = list(self.model.encoder.img_embedding.parameters()) + \
-                           list(self.model.encoder.bn.parameters()) + \
-                           list(self.model.decoder.parameters())
-        return cnn_extractor_params,captioner_params
-
-class BUTDSpatial_Eng(Engine):
-    def show_additional_rlt(self,additional,image,caption):
-        alphas = additional[0]
-        alphas = alphas.squeeze(0)  #(1,max_len,49)->(max_len,49)
-        alphas = alphas.view(alphas.size(0),self.settings['enc_img_size'],self.settings['enc_img_size'])     #(max_len,14,14)/(max_len,7,7)
-        alphas = alphas.cpu().detach().numpy()
-        caption.append('<end>')
-        visualize_att(image=image,alphas=alphas,caption=caption)
-
-class AoASpatial_Eng(Engine):
-    def get_model_params(self):
-        cnn_extractor_params = list(filter(lambda p: p.requires_grad, self.model.encoder.feature_extractor.parameters()))
-        captioner_params = list(self.model.img_feats_porjection.parameters())+\
-                           list(self.model.aoa_refine.parameters())+\
-                           list(self.model.decoder.parameters())
-        return cnn_extractor_params,captioner_params

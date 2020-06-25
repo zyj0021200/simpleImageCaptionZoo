@@ -1,0 +1,5 @@
+{
+  "model_type": "AoADetection",
+  "embed_dim": 512,
+  "hidden_dim": 512
+}

@@ -31,7 +31,12 @@ Many thanks to the authors and their codes for the following references:
 
 ## Results obtained
 
-![results](https://github.com/zyj0021200/simpleImageCaptionZoo/blob/master/results.png)
+| Model         | XE/ w/o Beam Seaerch | XE/ w/  beam search | SCST/ w/o beam search | SCST/ w/ beam search |
+| ------------- | -------------------- | ------------------- | --------------------- | -------------------- |
+| NIC           | 93.1                 | 96.5                | 103.8                 | 104.3                |
+| BUTDSpatial   | 99.1                 | 102.2               | 110.2                 | 110.5                |
+| BUTDDetection | 100.9                | 109.2               | -                     | -                    |
+
 
 Results reported on COCO14 Karpathy test split.
 

@@ -3,8 +3,9 @@
 ### Most recent update
 - support pretrained faster-rcnn bottom-up-features
 - support BUTD and AoA model
-- add code comments for Data_json_modification.py
+- add code comments for **Data_json_modification.py**
 
+## Introduction
 This is a PyTorch implementation of Image Caption Models. However, this project does not win with the variety of STOA models covered. Its main purpose is to introduce the common operations and tricks involved in the reproduction process of Image Caption models. I tried to make the code as simple as possible, while the code comments are as detailed as possible. Considering I am not a native English speaker, some of my comment statements may not be accurate enough. The project has covered the following content:
 
 - Support training and testing for **four datasets** (Flickr8K/30K,COCO14/17)

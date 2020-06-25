@@ -31,7 +31,7 @@ Many thanks to the authors and their codes for the following references:
 
 ## Results obtained
 
-![results](D:\5 Programme\PyCharmProjects\results.png)
+![results](https://github.com/zyj0021200/simpleImageCaptionZoo/blob/master/results.png)
 
 Results reported on COCO14 Karpathy test split.
 
@@ -66,5 +66,7 @@ Results reported on COCO14 Karpathy test split.
 
 ## Visualization Examples
 
+<div align=center><img src="https://github.com/zyj0021200/simpleImageCaptionZoo/blob/master/images/bbox_atten_BUTD.png" width="600" height="450" /></div>
+<div align=center><img src="https://github.com/zyj0021200/simpleImageCaptionZoo/blob/master/images/spatial_atten_BUTD.png" width="600" height="450" /></div>
 
 

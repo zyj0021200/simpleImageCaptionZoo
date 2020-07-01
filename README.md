@@ -40,7 +40,7 @@ Many thanks to the authors and their codes for the following references:
 
 | Model         | XE/ w/o Beam Seaerch | XE/ w/  beam search | SCST/ w/o beam search | SCST/ w/ beam search |
 | ------------- | -------------------- | ------------------- | --------------------- | -------------------- |
-| NIC           | 93.1                 | 96.5                | 103.8                 | 104.3                |
+| NIC           | 93.4                 | 98.1                | 103.8                 | 104.3                |
 | BUTDSpatial   | 97.3                 | 103.0               | 110.2                 | 110.5                |
 | BUTDDetection | 106.1                | 111.4               | -                     | -                    |
 

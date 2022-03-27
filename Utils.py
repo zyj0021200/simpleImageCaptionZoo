@@ -3,21 +3,21 @@ from PIL import Image
 import matplotlib.pyplot as plt
 import matplotlib.cm as cm
 import pickle
+import torch.nn.functional as Fun
 from pycocotools.coco import COCO
 import json
 import torch
 import skimage.transform
 import torchvision.transforms as transforms
-from DatasetClass import CaptionData
+from ClassRepository.DatasetClass import CaptionData
 from Models.NIC_Model import NIC_Captioner
 from Models.BUTD_Model import BUTDSpatial_Captioner,BUTDDetection_Captioner
 from Models.AoA_Model import AoASpatial_Captioner,AoADetection_Captioner
-from Build_Vocab import build_vocab
 import torch.utils.data as tdata
 import torch.nn as nn
 import numpy as np
 from cider.pyciderevalcap.ciderD.ciderD import CiderD
-from Datasets import CaptionTrainDataset,CaptionEvalDataset,CaptionTrainSCSTDataset,COCOCaptionTrain_collate_fn,COCOCaptionTrainSCST_collate_fn
+from Datasets import CaptionTrainDataset,CaptionEvalDataset,CaptionTrainSCSTDataset,COCOCaptionTrain_collate_fn,COCOCaptionTrainSCST_collate_fn,COCOCaptionEval_collate_fn
 
 #----------------------data utils--------------------------#
 def parse_data_config(path,base_dir):
@@ -35,51 +35,71 @@ def parse_data_config(path,base_dir):
         options[key.strip()] = value.strip()
     return options
 
-def get_caption_vocab(args,opt):
-    caption_vocab_path = opt['caption_vocab_path']
-    caption_json_path = opt['train_caption_path']
-    if os.path.exists(caption_vocab_path):
-        caption_vocab_file = open(caption_vocab_path, 'rb')
-        caption_vocab = pickle.load(caption_vocab_file)
-        print('Caption Vocab for dataset:%s loaded complete.' % args.dataset)
-    else:
-        caption_vocab = build_vocab(json=caption_json_path, threshold=5)
-        with open(caption_vocab_path, 'wb') as f:
-            pickle.dump(caption_vocab, f)
-        print("Total vocabulary size: %d" % len(caption_vocab))
-        print("Saved the vocabulary wrapper to '%s'" % caption_vocab_path)
-    return caption_vocab
-
-def get_train_dataloader(args,opt,caption_vocab):
+def get_train_dataloader(args,opt,caption_vocab,supp_infos=[]):
     train_img_transform = get_transform(resized_img_size=args.img_size, enhancement=['RandomHorizontalFlip'])
-    train_dataset = CaptionTrainDataset(img_root=opt['image_root'], cap_ann_path=opt['train_caption_path'],
-                                        vocab=caption_vocab, img_transform=train_img_transform,
-                                        dataset_name=args.dataset)
-    train_dataloader = tdata.DataLoader(dataset=train_dataset, batch_size=args.train_batch_size, shuffle=True,
-                                        num_workers=4, collate_fn=COCOCaptionTrain_collate_fn)
+    train_dataset = CaptionTrainDataset(
+        img_root=opt['image_root'],
+        cap_ann_path=opt['train_caption_path'],
+        vocab=caption_vocab,
+        img_transform=train_img_transform,
+        dataset_name=args.dataset,
+        supp_infos=supp_infos,
+        supp_dir=opt['data_dir']
+    )
+    train_dataloader = tdata.DataLoader(
+        dataset=train_dataset,
+        batch_size=args.train_batch_size,
+        shuffle=True,
+        num_workers=4,
+        collate_fn=COCOCaptionTrain_collate_fn
+    )
     print('Finish initialing train_dataloader.')
     return train_dataloader
 
-def get_eval_dataloader(args,opt,eval_split):
+def get_eval_dataloader(args,opt,eval_split,use_beam=False,supp_infos=[]):
     eval_img_transform = get_transform(resized_img_size=args.img_size, enhancement=[])
     if eval_split == 'val':cap_ann_path = opt['val_caption_path']
     else:cap_ann_path = opt['test_caption_path']
-    eval_dataset = CaptionEvalDataset(img_root=opt['image_root'], cap_ann_path=cap_ann_path,
-                                      img_transform=eval_img_transform, dataset_name=args.dataset, eval_split=eval_split)
-    if args.eval_beam_size != -1:
+    eval_dataset = CaptionEvalDataset(
+        img_root=opt['image_root'],
+        cap_ann_path=cap_ann_path,
+        img_transform=eval_img_transform,
+        dataset_name=args.dataset,
+        eval_split=eval_split,
+        supp_infos=supp_infos,
+        supp_dir=opt['data_dir']
+    )
+    if use_beam:
         eval_batch_size = 1
     else:
         eval_batch_size = args.eval_batch_size
-    eval_dataloader = tdata.DataLoader(dataset=eval_dataset, batch_size=eval_batch_size, shuffle=False, num_workers=4)
+    eval_dataloader = tdata.DataLoader(
+        dataset=eval_dataset,
+        batch_size=eval_batch_size,
+        shuffle=False,
+        num_workers=4,
+        collate_fn=COCOCaptionEval_collate_fn
+    )
     print('Finish initialing eval_dataloader.')
     return eval_dataloader
 
-def get_scst_train_dataloader(args,opt):
+def get_scst_train_dataloader(args,opt,supp_infos=[]):
     train_img_transform = get_transform(resized_img_size=args.img_size, enhancement=['RandomHorizontalFlip'])
-    scst_train_dataset = CaptionTrainSCSTDataset(img_root=opt['image_root'], cap_ann_path=opt['train_caption_path'],
-                                                 img_transform=train_img_transform, dataset_name=args.dataset)
-    scst_train_dataloader = tdata.DataLoader(dataset=scst_train_dataset, batch_size=args.scst_train_batch_size,
-                                             shuffle=True, num_workers=4, collate_fn=COCOCaptionTrainSCST_collate_fn)
+    scst_train_dataset = CaptionTrainSCSTDataset(
+        img_root=opt['image_root'],
+        cap_ann_path=opt['train_caption_path'],
+        img_transform=train_img_transform,
+        dataset_name=args.dataset,
+        supp_infos=supp_infos,
+        supp_dir=opt['data_dir']
+    )
+    scst_train_dataloader = tdata.DataLoader(
+        dataset=scst_train_dataset,
+        batch_size=args.scst_train_batch_size,
+        shuffle=True,
+        num_workers=4,
+        collate_fn=COCOCaptionTrainSCST_collate_fn
+    )
     print('Finish initialing scst_train_dataloader.')
     return scst_train_dataloader
 
@@ -197,7 +217,7 @@ def get_transform(resized_img_size=224,enhancement=[]):
 def init_SGD_optimizer(params, lr, momentum=0.9, weight_decay=1e-5):
     return torch.optim.SGD(params=params, lr=lr, momentum=momentum, weight_decay=weight_decay)
 def init_Adam_optimizer(params, lr):
-    return torch.optim.Adam(params=params, lr=lr)
+    return torch.optim.Adam(params=params, lr=lr,betas=(0.9,0.999),eps=1e-8,weight_decay=0)
 
 def init_optimizer(optimizer_type,params,learning_rate):
     optimizer = None
@@ -208,15 +228,17 @@ def init_optimizer(optimizer_type,params,learning_rate):
             optimizer = init_SGD_optimizer(params=params,lr=learning_rate)
     return optimizer
 
-def set_lr(optimizer, lr):
-    for group in optimizer.param_groups:
-        group['lr'] = lr
+def set_lr(optimizer, lr_list):
+    for i,group in enumerate(optimizer.param_groups):
+        group['lr'] = lr_list[i]
 
 def get_lr(optimizer):
+    lr_list = []
     for group in optimizer.param_groups:
-        return group['lr']
+        lr_list.append(group['lr'])
+    return lr_list
 
-def clip_gradient(optimizer, grad_clip):
+def clip_gradient(optimizer, grad_clip=0.1):
     """
     Clips gradients computed during backpropagation to avoid explosion of gradients.
     :param optimizer: optimizer with the gradients to be clipped
@@ -226,6 +248,42 @@ def clip_gradient(optimizer, grad_clip):
         for param in group['params']:
             if param.grad is not None:
                 param.grad.data.clamp_(-grad_clip, grad_clip)
+
+def to_contiguous(tensor):
+    if tensor.is_contiguous():
+        return tensor
+    else:
+        return tensor.contiguous()
+
+class LabelSmoothingLoss(nn.Module):
+    def __init__(self, smoothing=0.0):
+        super(LabelSmoothingLoss, self).__init__()
+        self.criterion = nn.KLDivLoss(reduction='none')
+        # self.padding_idx = padding_idx
+        self.confidence = 1.0 - smoothing
+        self.smoothing = smoothing
+        # self.size = size
+        self.true_dist = None
+
+    def forward(self, input, target):
+        '''
+        Perform label_smoothing loss calculation on pack_padded_predictions and targets
+        :param input: pack_padded_sequence (total_num_words_in_batch,vocab_size)
+        :param target: pack_padded_sequence (total_num_words_in_batch)
+        :return: loss: floatTensor
+        '''
+        # assert x.size(1) == self.size
+        input = Fun.log_softmax(input,dim=-1)
+        self.size = input.size(1)
+        # true_dist = x.data.clone()
+        true_dist = input.data.clone()
+        # true_dist.fill_(self.smoothing / (self.size - 2))
+        true_dist.fill_(self.smoothing / (self.size - 1))
+        true_dist.scatter_(1, target.data.unsqueeze(1), self.confidence)
+        # true_dist[:, self.padding_idx] = 0
+        # mask = torch.nonzero(target.data == self.padding_idx)
+        # self.true_dist = true_dist
+        return (self.criterion(input, true_dist).sum(1)).sum() / input.size(0)
 
 # SCST code mainly adapted from
 # https://github.com/ruotianluo/self-critical.pytorch and https://github.com/fawazsammani/show-edit-tell/
@@ -313,7 +371,7 @@ def visualize_att(image, alphas, caption, img_size=448, smooth=True):
     """
     Visualizes caption with weights at every word.
     :param image: (W,H)
-    :param alphas: weights (L-1,h*w)
+    :param alphas: weights (L-1,h,w)
     :param caption: [<sta>,'a','man',...,'.',<end>]
     :param smooth: smooth weights?
     """

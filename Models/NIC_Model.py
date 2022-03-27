@@ -25,6 +25,11 @@ class EncoderCNN(nn.Module):
         self.bn = nn.BatchNorm1d(embed_dim,momentum=0.01)
 
     def forward(self, images):
+        '''
+        embed raw image tensors into visual features
+        :param images: (bsize,3,224,224)
+        :return: embed_features: (bsize,embed_dim)
+        '''
         features = self.feature_extractor(images)   #(bsize,3,224,224) -> (bsize,2048,7,7)
         features = self.pool(features)      #(bsize,2048,7,7)->(bsize,2048,1,1)
         features = features.view(features.size(0),-1)
@@ -52,15 +57,22 @@ class DecoderRNN(nn.Module):
 
     def forward(self,features,captions,lengths):
         '''
-        :param features:(bsize,embed_dim)
-        :param captions:(bsize,max_len)
-        :param lengths:
-        :return:
+        XE Loss training process.
+        :param features: (bsize,embed_dim)
+        :param captions: (bsize,max_len) sorted in length,torch.LongTensor, e.g.:
+                [[1(<sta>),24,65,3633,54,234,67,34,12,2(<end>)],    #max_len=10
+                [1(<sta>),45,5434,235,12,58,11,2(<end>),0,0],
+                ...
+                [1(<sta>),24,7534,523,12,2(<end>),0,0,0,0]]
+        :param lengths:[9,7,...,5]
+                #note that length[i] = len(caption[i])-1 since we skip the 2<end> token when feeding the captions-tensor into the model
+                and we skip the 1<sta> token when generating predictions for loss calculation. Thus the total training step in this batch equals to max(lengths)
+        :return:packed_predictions: packed_padded_sequence:((total_tokens_nums,vocab_size),indices(could be ignored,not used in training))
         '''
         bsize = features.size(0)
         h,c = self.init_hidden_state(bsize=bsize,hidden_dim=self.hidden_dim,features=features)
         #embeddings = self.embed(captions)   #(bsize,max_len,embed_dim)
-        predictions = torch.zeros(captions.size(0),captions.size(1)-1,self.vocab_size).to(self.device)
+        predictions = torch.zeros(bsize,max(lengths),self.vocab_size).to(self.device)
 
         for time_step in range(captions.size(1)-1):
             bsize_t = sum([caption_len > time_step for caption_len in lengths])
@@ -85,7 +97,35 @@ class DecoderRNN(nn.Module):
         pack_predictions = pack_padded_sequence(predictions,lengths,batch_first=True)
         return pack_predictions
 
+    def sample(self,features,max_len=20):
+        '''
+        Use Greedy-search to generate predicted captions
+        :param features: (bsize,embed_dim)
+        :param max_len: maximum length(or time_step) of the generated sentence
+        :return:sampled_ids:(bsize,max_len)
+        '''
+        bsize = features.size(0)
+        h,c = self.init_hidden_state(bsize=bsize,hidden_dim=self.hidden_dim,features=features)
+        captions = torch.LongTensor(bsize,1).fill_(1).to(self.device)
+        sampled_ids = []
+        for time_step in range(max_len):
+            embeddings = self.embed(captions).squeeze(1)    #(bsize,embed_dim)
+            h,c = self.lstm(embeddings,(h,c))
+            preds = self.predict(self.dropout(h))
+            pred_id = preds.max(1)[1]   #(bsize,)
+            captions = pred_id.unsqueeze(1) #(bsize,1)
+            sampled_ids.append(captions)
+        sampled_ids = torch.cat(sampled_ids,dim=1)  #(bsize,max_seq)
+        return sampled_ids
+
     def sample_rl(self,features,max_len=20):
+        '''
+        Use Monte Carlo method(Random Sampling) to generate sampled predictions for scst training
+        :param features: (bsize,embed_dim)
+        :param max_len: maximum length(or time_step) of the generated sentence
+        :return:seq:(bsize,max_len)
+                seqLogprobs:(bsize,max_len)
+        '''
         bsize = features.size(0)
         h,c = self.init_hidden_state(bsize=bsize,hidden_dim=self.hidden_dim,features=features)
         its = torch.LongTensor(bsize,1).fill_(1).to(self.device)
@@ -110,22 +150,13 @@ class DecoderRNN(nn.Module):
             if unfinished.sum() == 0: break
         return seq,seqLogprobs
 
-    def sample(self,features,max_len=20):
-        bsize = features.size(0)
-        h,c = self.init_hidden_state(bsize=bsize,hidden_dim=self.hidden_dim,features=features)
-        captions = torch.LongTensor(bsize,1).fill_(1).to(self.device)
-        sampled_ids = []
-        for time_step in range(max_len):
-            embeddings = self.embed(captions).squeeze(1)    #(bsize,embed_dim)
-            h,c = self.lstm(embeddings,(h,c))
-            preds = self.predict(self.dropout(h))
-            pred_id = preds.max(1)[1]   #(bsize,)
-            captions = pred_id.unsqueeze(1) #(bsize,1)
-            sampled_ids.append(captions)
-        sampled_ids = torch.cat(sampled_ids,dim=1)  #(bsize,max_seq)
-        return sampled_ids
-
     def beam_search_sample(self,features,beam_size=5):
+        '''
+        Use Beam search method to generate predicted captions, asserting bsize=1
+        :param features: (bsize=1,embed_dim)
+        :param beam_size: beam numbers scalar
+        :return:seq_tensor:(1,sentence_len)
+        '''
         k = beam_size
         k_prev_words = torch.LongTensor(k,1).fill_(1).to(self.device)
         seqs = k_prev_words
@@ -185,9 +216,25 @@ class NIC_Captioner(nn.Module):
         super(NIC_Captioner,self).__init__()
         self.encoder = EncoderCNN(embed_dim=embed_dim)
         self.decoder = DecoderRNN(embed_dim=embed_dim,hidden_dim=hidden_dim,vocab_size=vocab_size,dropout=dropout,device=device)
-        self.cnn_fine_tune(flag=False)
+        self.cnn_finetune(flag=False)
 
-    def cnn_fine_tune(self,flag=False):
+    def get_param_groups(self,lr_dict):
+        cnn_extractor_params = list(filter(lambda p: p.requires_grad, self.encoder.feature_extractor.parameters()))
+        captioner_params = list(self.encoder.img_embedding.parameters()) + \
+                           list(self.encoder.bn.parameters()) + \
+                           list(self.decoder.parameters())
+        assert lr_dict.__contains__('cnn_ft_lr')
+        param_groups = [
+            {'params':captioner_params,'lr':lr_dict['lr']},
+            {'params':cnn_extractor_params,'lr':lr_dict['cnn_ft_lr']}
+        ]
+        return param_groups
+
+    def cnn_finetune(self,flag=False):
+        '''
+        we only fine tune on the last layer of resnet-101
+        :param flag: enable cnn fine_tune when set true.
+        '''
         if flag:
             for module in list(self.encoder.feature_extractor.children())[7:]:
                 for param in module.parameters():
@@ -196,27 +243,78 @@ class NIC_Captioner(nn.Module):
             for params in self.encoder.feature_extractor.parameters():
                 params.requires_grad = False
 
-    def forward(self,images,captions,lengths):
-        embed_features = self.encoder(images)
+    def forward(self,visual_inputs,captions,lengths):
+        '''
+        XE Loss training process.
+        :param visual_inputs: {'img_tensors':torch.FloatTensor(bsize,3,224,224)}
+            dict of available visual features. when using NIC model, only raw img tensors are required
+        :param captions: (bsize,max_len) sorted in length,torch.LongTensor, e.g.:
+                [[1(<sta>),24,65,3633,54,234,67,34,12,2(<end>)],    #max_len=10
+                [1(<sta>),45,5434,235,12,58,11,2(<end>),0,0],
+                ...
+                [1(<sta>),24,7534,523,12,2(<end>),0,0,0,0]]
+        :param lengths:[9,7,...,5]
+                #note that length[i] = len(caption[i])-1 since we skip the 2<end> token when feeding the captions-tensor into the model
+                and we skip the 1<sta> token when generating predictions for loss calculation. Thus the total training step in this batch equals to max(lengths)
+        :return:packed_predictions: packed_padded_sequence:((total_tokens_nums,vocab_size),indices(could be ignored,not used in training))
+        '''
+        images = visual_inputs['img_tensors']   #(bsize,3,224,224)
+        embed_features = self.encoder(images)   #(bsize,embed_dim)
         packed_predictions = self.decoder(embed_features,captions,lengths)
         return packed_predictions
 
-    def sampler_rl(self,images,max_len=20):
-        embed_features = self.encoder(images)
-        seq,seqLogprobs = self.decoder.sample_rl(features=embed_features,max_len=max_len)
-        return seq,seqLogprobs
-
-    def sampler(self,images,max_len=20):
-        embed_features = self.encoder(images)
+    def sampler(self,visual_inputs,max_len=20):
+        '''
+        Use Greedy-search to generate predicted captions
+        :param visual_inputs: {'img_tensors':torch.FloatTensor(bsize,3,224,224)}
+            dict of available visual features. when using NIC model, only raw img tensors are required
+        :param max_len: maximum length(or time_step) of the generated sentence
+        :return:sampled_ids:(bsize,max_len)
+        '''
+        images = visual_inputs['img_tensors']   #(bsize,3,224,224)
+        embed_features = self.encoder(images)   #(bsize,embed_dim)
         sampled_ids = self.decoder.sample(features=embed_features,max_len=max_len)
         return sampled_ids
 
-    def beam_search_sampler(self,images,beam_size=5):
-        embed_features = self.encoder(images)
+    def sampler_rl(self,visual_inputs,max_len=20):
+        '''
+        Use Monte Carlo method(Random Sampling) to generate sampled predictions for scst training
+        :param visual_inputs: {'img_tensors':torch.FloatTensor(bsize,3,224,224)}
+            dict of available visual features. when using NIC model, only raw img tensors are required
+        :param max_len: maximum length(or time_step) of the generated sentence
+        :return:seq:(bsize,max_len)
+                seqLogprobs:(bsize,max_len)
+        '''
+        images = visual_inputs['img_tensors']   #(bsize,3,224,224)
+        embed_features = self.encoder(images)   #(bsize,embed_dim)
+        seq,seqLogprobs = self.decoder.sample_rl(features=embed_features,max_len=max_len)
+        return seq,seqLogprobs
+
+    def beam_search_sampler(self,visual_inputs,beam_size=5):
+        '''
+        Use Beam search method to generate predicted captions, asserting bsize=1
+        :param visual_inputs: {'img_tensors':torch.FloatTensor(bsize,3,224,224)}
+            dict of available visual features. when using NIC model, only raw img tensors are required
+        :param beam_size: beam numbers scalar
+        :return: sampled_ids:(bsize=1,sentence_len)
+        '''
+        images = visual_inputs['img_tensors']   #(bsize=1,3,224,224)
+        embed_features = self.encoder(images)   #(bsize=1,embed_dim)
         sampled_ids = self.decoder.beam_search_sample(features=embed_features,beam_size=beam_size)
         return sampled_ids
 
-    def eval_test_image(self,image,caption_vocab,max_len=20,eval_beam_size=-1):
+    def eval_test_image(self,visual_inputs,caption_vocab,max_len=20,eval_beam_size=-1):
+        '''
+        Tests on single given image.
+        :param visual_inputs: {'img_tensors':torch.FloatTensor(bsize=1,3,224,224)}
+            dict of available visual features. when using NIC model, only raw img tensors are required
+        :param caption_vocab: pkl-file. used to translate the generated sentence into human language.
+        :param max_len: maximum length(or time_step) of the generated sentence
+        :param eval_beam_size: beam numbers scalar
+        :return:caption: generated caption for given image.
+                additional output: e.g. attention weights over different visual features at each time step during training.(not used in NIC)
+        '''
+        image = visual_inputs['img_tensors']    #(bsize=1,3,224,224)
         assert image.size(0) == 1
         embed_features = self.encoder(image)
         if eval_beam_size!=-1:
@@ -231,4 +329,4 @@ class NIC_Captioner(nn.Module):
                 break
             elif word != '<sta>':
                 caption.append(word)
-        return caption,[]       #for additional output
+        return caption,[]       #for additional_output

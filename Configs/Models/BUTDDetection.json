@@ -1,9 +1,9 @@
 {
   "model_type": "BUTDDetection",
   "enc_img_size": 7,
-  "atten_dim": 512,
-  "embed_dim": 512,
-  "hidden_dim": 512,
+  "atten_dim": 1024,
+  "embed_dim": 1024,
+  "hidden_dim": 1024,
   "optimizer": "Adam",
   "lr": 4e-4,
   "scst_lr": 2e-5

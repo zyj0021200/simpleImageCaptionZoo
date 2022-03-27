@@ -16,7 +16,7 @@ def coco_eval(results,eval_caption_path):
     eval_json_output_dir = './coco_caption/results/'
     os.makedirs(eval_json_output_dir,exist_ok=True)
     resFile = eval_json_output_dir + 'captions-generate.json'
-    json.dump(results,open(resFile,'w'))
+    json.dump(results,open(resFile,'w',encoding='utf-8'))
 
     annFile = eval_caption_path
     coco = COCO(annFile)

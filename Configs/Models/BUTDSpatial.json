@@ -1,9 +1,9 @@
 {
   "model_type": "BUTDSpatial",
   "enc_img_size": 7,
-  "atten_dim": 512,
-  "embed_dim": 512,
-  "hidden_dim": 512,
+  "atten_dim": 1024,
+  "embed_dim": 1024,
+  "hidden_dim": 1024,
   "optimizer": "Adam",
   "cnn_FT_lr": 1e-4,
   "lr": 4e-4,

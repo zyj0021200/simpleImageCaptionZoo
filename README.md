@@ -1,6 +1,10 @@
 # simple Image Caption Zoo (Updating)
 
 ### Most recent update
+- update code skeletons
+- add annotations for **Main.py**
+
+
 - support pretrained faster-rcnn bottom-up-features
 - support BUTD and AoA model
 - add code comments for **Data_json_modification.py**
